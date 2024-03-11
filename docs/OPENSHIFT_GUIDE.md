@@ -10,6 +10,7 @@
 # Installation
 
 **Note**: These instructions were tested on OpenShift 4.12, with KServe 0.10
+**Note**: These instructions were tested on OpenShift 4.15, with KServe 0.12.0 and s390x platform.
 
 KServe can use Knative as a model serving layer. In OpenShift Knative comes bundled as a product called [OpenShift Serverless](https://docs.openshift.com/container-platform/latest/serverless/about/about-serverless.html). OpenShift Serverless can be installed with two different ingress layers:
 
@@ -21,23 +22,169 @@ Follow the corresponding installation guide:
 1. [Kourier](#installation-with-kourier)
 2. [Service Mesh](#installation-with-service-mesh)
 
+## Installation of OpenShift Serverless 
+Follow this link [https://docs.openshift.com/serverless/1.31/install/preparing-serverless-install.html](https://docs.openshift.com/serverless/1.31/install/preparing-serverless-install.html) install OpenShift Serverless. 
+
+### step1: Install OpenShift Serverless Operator from the web console or via oc command
+[https://docs.openshift.com/serverless/1.31/install/install-serverless-operator.html](https://docs.openshift.com/serverless/1.31/install/install-serverless-operator.html)
+
+
+Verification:
+For (install from web console)
+ select Catalog → Installed Operators to verify that the OpenShift Serverless Operator eventually shows up and its Status ultimately resolves to InstallSucceeded in the relevant namespace.
+
+ or (for oc command)
+Check that the cluster service version (CSV) has reached the Succeeded phase:
+
+Example command
+```bash
+$ oc get csv
+```
+Example output
+```bash 
+NAME                          DISPLAY                        VERSION   REPLACES                      PHASE
+serverless-operator.v1.25.0   Red Hat OpenShift Serverless   1.25.0    serverless-operator.v1.24.0   Succeeded
+```
+### step 2 : Create knative serving instance  --must in knative-serving namespace
+if use kouries, in the spec: section: 
+spec:
+  ingress:
+    kourier:
+      enabled: true
+this setting can aslo be set via web console , choose :
+ingress-->kourier --->enabled --checked 
+**Note** :  openshift/serverless/knativeserving-kourier.yaml  is same as yaml file generated from web-console 
+
+Verification:
+```bash
+oc get pods -n knative-serving
+oc get pods -n knative-serving-ingress
+```
+Offical documents : https://docs.openshift.com/serverless/1.31/install/installing-knative-serving.html
+
+### step 3: Install cert-manager operator 
+due cert-manager Operator for Red Hat OpenShift v1.13.0 support s390x arch ,and avaiable Jan 8,2024 on  openshift-marketplace, don't need do below work around by installing cert-manager-operator 1.13.1 from community-operators.  like below: 
+```bash
+### orig 
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cert-manager
+  namespace: cert-manager-operator
+spec:
+  channel: stable-v1
+  name: openshift-cert-manager-operator
+  installPlanApproval: Automatic
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  ### target 
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cert-manager
+  namespace: cert-manager-operator
+spec:
+  channel: stable
+  name: cert-manager
+  installPlanApproval: Automatic
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  startingCSV: cert-manager.v1.13.1
+```
+verification:  
+```bash 
+oc get pods -n cert-manager-operator
+```
+or check 
+```bash
+oc get csv  -n cert-manager-operator 
+NAME                            DISPLAY                                       VERSION   REPLACES                      PHASE
+cert-manager-operator.v1.13.0   cert-manager Operator for Red Hat OpenShift   1.13.0                                  Succeeded
+```
+### step4: Install KServe 
+Download kserve CRD file and install it , don't need modify the url or not ? 
+export KSERVE_VERSION=v0.12.0
+oc apply -f "https://github.com/kserve/kserve/releases/download/${KSERVE_VERSION}/kserve.yaml"
+
+curl -k -L -o kserve.yaml -v https://github.com/kserve/kserve/releases/download/v0.12.0/kserve.yaml
+
+oc apply -f "https://github.com/kserve/kserve/releases/download/${KSERVE_VERSION}/kserve.yaml" ----correct url ???
+oc  apply -f kserve.yaml 
+
+**Note** : issue : 
+ oc get pod -n kserve
+NAME                                         READY   STATUS             RESTARTS   AGE
+kserve-controller-manager-7bffcb7459-4685q   1/2     ImagePullBackOff   0          4m15s
+
+pod event:
+Failed to pull image "kserve/kserve-controller:v0.12.0": fetching target platform image selected from manifest list: reading manifest sha256:ad1797ac277f98021f887056cae98105f35be9f7c2929acab00766a433217ed5 in docker.io/kserve/kserve-controller: toomanyrequests: You have reached your pull rate limit. You may increase the limit by authenticating and upgrading: https://www.docker.com/increase-rate-limit
+
+Solutions: 
+add pullscecret for pull image: 
+modify kserve-controller-manager  deployment yaml file: 
+step1: create a secret  under kserve namespace: 
+oc project kserve 
+oc create secret docker-registry secret4docker  \
+   --docker-server=https://index.docker.io/v1/ \
+   --docker-username=shw8927 \
+   --docker-password=dockershw8927 \
+   --docker-email=shw8927@sina.com
+
+oc edit deployment/kserve-controller-manager 
+add: 
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+      - name: secret4docker
+
+**Note**: you can modify the deployment yaml file in  kserver.yaml before apply kserve.yaml file.  
+
+### step 4.5 patch of configmap/inferenceservice-config set ""disableIstioVirtualHost": true
+oc edit configmap/inferenceservice-config --namespace kserve
+### step 5 : Install KServe Built-in ClusterServingRuntimes 
+### download 
+curl -L -o v0.12.0_kserve-cluster-resources.yaml  https://github.com/kserve/kserve/releases/download/v0.12.0/kserve-cluster-resources.yaml
+
+oc apply -f "https://github.com/kserve/kserve/releases/download/${KSERVE_VERSION}/kserve-cluster-resources.yaml"  ---wrong url for kserve v0.11 and v0.12 
+https://github.com/kserve/kserve/releases/download/v0.11.0/kserve-runtimes.yaml   --is wrong , for v0.12.0, but for v0.11.0 is correct,  refer [https://kserve.github.io/website/0.11/admin/serverless/serverless/#1-install-knative-serving](https://kserve.github.io/website/0.11/admin/serverless/serverless/#1-install-knative-serving)
+
+**Note**: only support IBMz till to Mar 6, 2024.
+kserve/kserve-controller
+kserve/agent
+kserve/router
+kserve/pqext
+kserve/rest-proxy
+kserve/modelmesh-controller
+kserve/modelmesh-controller-develop
+
+===== need manually build image for IBMZ 
+storage-initializer
+sklearnserver
+docker pull kserve/storage-initializer:v0.12.0
+
+#### create kserve-demo project ,and in this project install runtimes 
+oc new-project kserve-demo  
+
 ## Installation with Kourier
 
 ```bash
-# Install OpenShift Serverless operator
+# Install OpenShift Serverless operator  --step1 
 oc apply -f openshift/serverless/operator.yaml
 oc wait --for=condition=ready pod --all -n openshift-serverless --timeout=300s
 
-# Create an Knative instance
+# Create an Knative instance  --step2 
 oc apply -f openshift/serverless/knativeserving-kourier.yaml
 
 # Wait for all pods in `knative-serving` to be ready
 oc get pod -n knative-serving
 
-# Install cert-manager operator
+# Install cert-manager operator  --step3 
 oc apply -f openshift/cert-manager/operator.yaml
 
-# Install KServe
+# Install KServe  --step4  
 export KSERVE_VERSION=v0.10.1
 oc apply -f "https://github.com/kserve/kserve/releases/download/${KSERVE_VERSION}/kserve.yaml"
 
