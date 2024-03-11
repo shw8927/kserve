@@ -128,9 +128,9 @@ step1: create a secret  under kserve namespace:
 oc project kserve 
 oc create secret docker-registry secret4docker  \
    --docker-server=https://index.docker.io/v1/ \
-   --docker-username=shw8927 \
-   --docker-password=dockershw8927 \
-   --docker-email=shw8927@sina.com
+   --docker-username=username \
+   --docker-password=password \
+   --docker-email=email-of-user
 
 oc edit deployment/kserve-controller-manager 
 add: 
